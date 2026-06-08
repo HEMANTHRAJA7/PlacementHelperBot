@@ -5,7 +5,7 @@
 
 ## v1 Requirements
 
-### Ingestion (INGST)
+### Ingestion & Security Foundation (INGST)
 
 - [ ] **INGST-01**: User can authenticate via Gmail OAuth2 and link their VIT student account.
 - [ ] **INGST-02**: System registers a Gmail Watch API subscription for the linked mailbox.
@@ -16,29 +16,35 @@
 - [ ] **INGST-07**: Background task automatically renews the Gmail Watch subscription daily.
 - [ ] **INGST-08**: System monitors Gmail Watch status and logs alerts for watches nearing expiration.
 
-### Processing & AI (PROC)
+### Processing, AI Gateway, & Telegram Bot (PROC)
 
 - [ ] **PROC-01**: Celery worker retrieves email body, subject, and attachments via Gmail API in the background.
 - [ ] **PROC-02**: System runs a local deterministic pre-check on email text for student identifiers (Register Number, NeoPAT ID, Email, Name) before calling LLM.
 - [ ] **PROC-03**: Centralized AI Gateway parses email using Gemini Flash, returning structured JSON matching a Pydantic schema.
 - [ ] **PROC-04**: AI Gateway classifies email type (PLACEMENT_OPPORTUNITY, INTERNSHIP, ASSESSMENT, SHORTLIST, INTERVIEW, OFFER, REJECTION, OTHER).
 - [ ] **PROC-05**: AI Gateway extracts metadata (Company Name, Role, Package, Deadline, Event Type, Application Link).
-- [ ] **PROC-06**: AI Gateway processes attachments (PDFs, Excel sheets, and Images) using Gemini Vision to find candidate shortlist status.
-- [ ] **PROC-07**: AI Gateway logs cost metrics, enforces rate limits, handles retries, and maintains prompt versions.
+- [ ] **PROC-06**: AI Gateway handles prompt versioning, JSON schema validation, cost tracking, retries, and rate limiting.
+- [ ] **PROC-07**: Unidirectional Telegram Bot dispatcher sends formatted alerts containing parsed company and link info.
+- [ ] **PROC-08**: Notification priority engine maps alerts (Offer > Shortlist > Interview > Assessment > Opportunity) with custom visual stylings.
 
-### Notification & Reminders (NOTF)
+### Hybrid Attachment Processing & Matching (MATCH)
 
-- [ ] **NOTF-01**: Telegram Bot sends structured markdown notifications with direct action links.
-- [ ] **NOTF-02**: Notifications are styled by priority level (Offer > Shortlist > Interview > Assessment > Opportunity).
-- [ ] **NOTF-03**: Scheduler sends automated alerts 24h, 6h, and 1h prior to parsed application or event deadlines.
+- [ ] **MATCH-01**: System parses Excel/XLSX attachments deterministically using python parser (pandas/openpyxl) to search for user identifiers.
+- [ ] **MATCH-02**: System parses PDF attachments deterministically using python parser (pdfplumber) to search for user identifiers.
+- [ ] **MATCH-03**: System runs local OCR on Image attachments to extract text and match identifiers.
+- [ ] **MATCH-04**: System falls back to Gemini Vision API for multimodal table matching and reasoning ONLY when deterministic parsing fails.
 
-### Security & Privacy (SEC)
+### Security, Privacy & Monitoring (SEC)
 
 - [ ] **SEC-01**: Webhook listener validates incoming Pub/Sub HTTP POST request using Google OIDC JWT signatures.
 - [ ] **SEC-02**: DB fields (OAuth refresh tokens, Register Numbers, NeoPAT IDs) are encrypted at rest using AES-256 (cryptography Fernet) with a master key.
-- [ ] **SEC-03**: Temporary email attachments are processed entirely in memory or temporary volumes and deleted immediately upon task completion.
+- [ ] **SEC-03**: Temporary email attachments are processed entirely in memory or temporary volumes and deleted immediately upon task completion (Data Minimization).
 - [ ] **SEC-04**: System generates security audit logs tracking OAuth events, watch renewals, email processing, and notification delivery, storing metadata only.
 - [ ] **SEC-05**: Observability setup implements structured JSON logging, health checks, and Prometheus metrics.
+
+### Reminder Engine (REM)
+
+- [ ] **REM-01**: Scheduler sends automated alerts 24h, 6h, and 1h prior to parsed application or event deadlines based on priority policies.
 
 ## v2 Requirements
 
@@ -70,27 +76,30 @@
 | INGST-04 | Phase 1 | Pending |
 | INGST-05 | Phase 1 | Pending |
 | INGST-06 | Phase 1 | Pending |
-| INGST-07 | Phase 4 | Pending |
-| INGST-08 | Phase 4 | Pending |
+| SEC-01 | Phase 1 | Pending |
+| SEC-02 | Phase 1 | Pending |
 | PROC-01 | Phase 2 | Pending |
 | PROC-02 | Phase 2 | Pending |
 | PROC-03 | Phase 2 | Pending |
 | PROC-04 | Phase 2 | Pending |
-| PROC-05 | Phase 3 | Pending |
-| PROC-06 | Phase 3 | Pending |
+| PROC-05 | Phase 2 | Pending |
+| PROC-06 | Phase 2 | Pending |
 | PROC-07 | Phase 2 | Pending |
-| NOTF-01 | Phase 4 | Pending |
-| NOTF-02 | Phase 4 | Pending |
-| NOTF-03 | Phase 5 | Pending |
-| SEC-01 | Phase 4 | Pending |
-| SEC-02 | Phase 4 | Pending |
+| PROC-08 | Phase 2 | Pending |
+| MATCH-01 | Phase 3 | Pending |
+| MATCH-02 | Phase 3 | Pending |
+| MATCH-03 | Phase 3 | Pending |
+| MATCH-04 | Phase 3 | Pending |
+| INGST-07 | Phase 4 | Pending |
+| INGST-08 | Phase 4 | Pending |
 | SEC-03 | Phase 4 | Pending |
 | SEC-04 | Phase 4 | Pending |
 | SEC-05 | Phase 4 | Pending |
+| REM-01 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 23 total
-- Mapped to phases: 23
+- v1 requirements: 26 total
+- Mapped to phases: 26
 - Unmapped: 0 ✓
 
 ---
