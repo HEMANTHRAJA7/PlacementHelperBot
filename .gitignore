@@ -1,0 +1,43 @@
+# Environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# IDE / Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+.qodo/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node Server / Web / React Native (if root level is ever used)
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.expo/
+
+# Backups and temporary files
+diagnozer-app-backup/
+*.bak
+*.tmp
+
+
