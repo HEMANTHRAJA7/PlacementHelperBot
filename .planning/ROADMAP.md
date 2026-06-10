@@ -6,11 +6,11 @@ Placement Sentinel is built sequentially across 5 MVP-style phases, delivering e
 
 ## Phases
 
-- [ ] **Phase 1: Ingestion & Security Foundation** - Setup linked Gmail OAuth accounts, OIDC Pub/Sub webhooks, AES-256 DB encryption, and Celery DLQ queue.
-- [ ] **Phase 2: Core Processing, AI Gateway, & Telegram Bot** - Fetch mail, build AI Gateway with Gemini Flash classification, and send formatted priority alerts to Telegram.
-- [ ] **Phase 3: Hybrid Attachment Scanning & Matching** - Parse Excel, PDF, and Images deterministically, falling back to Gemini Vision for complex table matching.
-- [ ] **Phase 4: Lifecycle, Privacy, & Observability** - Implement Watch renewal, data minimization file wipes, audit logs, and Prometheus metrics.
-- [ ] **Phase 5: Reminder Engine** - Add scheduled Celery Beat reminders 24h, 6h, and 1h prior to application and interview deadlines.
+- [x] **Phase 1: Ingestion & Security Foundation** - Setup linked Gmail OAuth accounts, OIDC Pub/Sub webhooks, AES-256 DB encryption, and Celery DLQ queue.
+- [x] **Phase 2: Core Processing, AI Gateway, & Telegram Bot** - Fetch mail, build AI Gateway with Gemini Flash classification, and send formatted priority alerts to Telegram.
+- [x] **Phase 3: Hybrid Attachment Scanning & Matching** - Parse Excel, PDF, and Images deterministically, falling back to Gemini Vision for complex table matching.
+- [x] **Phase 4: Lifecycle, Privacy, & Observability** - Implement Watch renewal, data minimization file wipes, audit logs, and Prometheus metrics.
+- [x] **Phase 5: Reminder Engine** - Add scheduled Celery Beat reminders 24h, 6h, and 1h prior to application and interview deadlines.
 
 ## Phase Details
 
@@ -103,8 +103,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Ingestion & Security Foundation | 0/3 | Not started | - |
-| 2. Core Processing, AI Gateway, & Telegram Bot | 0/3 | Not started | - |
-| 3. Hybrid Attachment Scanning & Matching | 0/2 | Not started | - |
-| 4. Lifecycle, Privacy, & Observability | 0/3 | Not started | - |
-| 5. Reminder Engine | 0/1 | Not started | - |
+| 1. Ingestion & Security Foundation | 3/3 | Completed | 2026-06-09 |
+| 2. Core Processing, AI Gateway, & Telegram Bot | 3/3 | Completed | 2026-06-09 |
+| 3. Hybrid Attachment Scanning & Matching | 2/2 | Completed | 2026-06-10 |
+| 4. Lifecycle, Privacy, & Observability | 3/3 | Completed | 2026-06-10 |
+| 5. Reminder Engine | 1/1 | Completed | 2026-06-10 |
