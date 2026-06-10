@@ -69,6 +69,13 @@ class ClassificationResult(BaseModel):
     application_links: list[str] = Field(default_factory=list, description="Links/URLs for applications, tests, or registrations.")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score of the classification between 0.0 and 1.0.")
 
+class AttachmentMatchingResult(BaseModel):
+    is_matched: bool = Field(description="True if the student's Register Number, NeoPAT ID, Email, or Name is found in the attachment.")
+    matched_identifier: Optional[str] = Field(None, description="The specific identifier that matched (e.g. '21BCE0001', 'NP0099', or student's name).")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score of the match.")
+    reason: Optional[str] = Field(None, description="Brief explanation of where/how the match was found in the attachment.")
+
+
 class AIGateway:
     def __init__(self, api_key: str = None, redis_url: str = None):
         self.api_key = api_key or settings.GEMINI_API_KEY or "DUMMY_KEY"
@@ -217,3 +224,92 @@ class AIGateway:
             status_code=502,
             detail=f"AI Gateway failed after max retries. Last error: {str(last_exception)}"
         )
+
+    async def classify_attachment_vision(
+        self,
+        attachment_bytes: bytes,
+        mime_type: str,
+        student_info: dict,
+        message_id: Optional[str] = None
+    ) -> AttachmentMatchingResult:
+        """Sends an attachment file chunk (e.g. PDF, Image) to Gemini 2.0 Flash for vision-based structured student matching."""
+        system_instruction = (
+            "You are an advanced AI vision scanner for 'Placement Sentinel', a system that monitors placement shortlists.\n"
+            "Your task is to analyze the provided attachment file (which could be an image of a spreadsheet, a screenshot of a message, or a document table).\n"
+            "Determine if the file contains references matching any of the following student details:\n"
+            f"- Name tokens: {student_info.get('full_name', 'N/A')}\n"
+            f"- Register Number: {student_info.get('register_number', 'N/A')}\n"
+            f"- NeoPAT ID: {student_info.get('neopat_id', 'N/A')}\n"
+            f"- Email: {student_info.get('email', 'N/A')}\n\n"
+            "Rules:\n"
+            "1. Search case-insensitively.\n"
+            "2. If you find a matching name, register number, NeoPAT ID, or email, set `is_matched` to true, "
+            "populate `matched_identifier` with the value you found, and set your confidence. Describe the location in `reason`.\n"
+            "3. If none of the details are present, set `is_matched` to false.\n"
+            "4. Return the structured response conforming exactly to the response schema."
+        )
+
+        attachment_part = types.Part.from_bytes(
+            data=attachment_bytes,
+            mime_type=mime_type
+        )
+        
+        backoffs = [5.0, 30.0, 120.0]
+        last_exception = None
+        for attempt in range(4):
+            allowed = await self.check_rate_limit()
+            if not allowed:
+                logger.warning(f"Local Redis rate limit exceeded on attempt {attempt + 1}/4 for vision scan.")
+                if attempt < 3:
+                    await asyncio.sleep(backoffs[attempt])
+                    continue
+                else:
+                    await self.log_usage(0, 0, "rate_limited", message_id)
+                    raise HTTPException(
+                        status_code=429,
+                        detail="AI Gateway local rate limit exceeded for vision scan."
+                    )
+            
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=[
+                        "Analyze this attachment for the specified student details.",
+                        attachment_part
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=AttachmentMatchingResult,
+                    ),
+                )
+                
+                input_tokens = 0
+                output_tokens = 0
+                if response.usage_metadata:
+                    input_tokens = response.usage_metadata.prompt_token_count or 0
+                    output_tokens = response.usage_metadata.candidates_token_count or 0
+                    
+                await self.log_usage(input_tokens, output_tokens, "success", message_id)
+                
+                if hasattr(response, "parsed") and response.parsed is not None:
+                    return response.parsed
+                else:
+                    import json
+                    parsed_json = json.loads(response.text)
+                    return AttachmentMatchingResult(**parsed_json)
+                    
+            except (APIError, Exception) as e:
+                logger.warning(f"AI Gateway vision scan failed on attempt {attempt + 1}/4: {e}")
+                last_exception = e
+                await self.log_usage(0, 0, "failed", message_id)
+                if attempt < 3:
+                    await asyncio.sleep(backoffs[attempt])
+                else:
+                    break
+                    
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI Gateway vision scan failed after max retries. Last error: {str(last_exception)}"
+        )
+

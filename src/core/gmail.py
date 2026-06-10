@@ -101,3 +101,16 @@ async def refresh_access_token(refresh_token: str) -> str:
         data = response.json()
         return data["access_token"]
 
+async def fetch_gmail_attachment(access_token: str, message_id: str, attachment_id: str) -> bytes:
+    """Downloads a raw message attachment binary payload from the Gmail API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/attachments/{attachment_id}",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw_data = data.get("data", "")
+        return base64.urlsafe_b64decode(raw_data.encode("utf-8"))
+
+

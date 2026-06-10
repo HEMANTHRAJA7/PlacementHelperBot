@@ -86,7 +86,7 @@ async def test_pipeline_integration_success(
     # 2. Setup mocks
     mock_refresh.return_value = "mock_access_token"
     mock_fetch.return_value = {"id": "msg_99"}
-    mock_parse.return_value = ("Placement Drive", "VIT Placement Office", "Details for Microsoft.")
+    mock_parse.return_value = ("Placement Drive", "VIT Placement Office", "Details for Microsoft. 21BCE0001 Selected.")
     
     mock_classify.return_value = ClassificationResult(
         is_placement=True,

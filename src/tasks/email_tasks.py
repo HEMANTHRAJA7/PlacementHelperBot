@@ -7,10 +7,11 @@ from src.tasks.worker import celery_app
 from src.models.user import DeadLetterQueue, User
 from src.core import database
 from src.core.security import CredentialEncryptor
-from src.core.gmail import fetch_gmail_message, parse_gmail_message, refresh_access_token
+from src.core.gmail import fetch_gmail_message, parse_gmail_message, refresh_access_token, fetch_gmail_attachment
 from src.core.pre_check import check_student_identifiers
-from src.core.ai_gateway import AIGateway
+from src.core.ai_gateway import AIGateway, PlacementCategory
 from src.core.telegram_dispatcher import format_telegram_message, send_telegram_alert
+from src.core.attachment_parser import parse_pdf_in_memory, parse_excel_in_memory, parse_image_in_memory
 
 logger = get_task_logger(__name__)
 
@@ -25,6 +26,23 @@ async def write_to_dlq_async(message_id: str, email: str, history_id: int, error
         session.add(dlq_entry)
         await session.commit()
         logger.info(f"Successfully wrote failed message {message_id} to Dead-Letter Queue database.")
+
+def _extract_attachments(part: dict) -> list[dict]:
+    """Recursively traverses MIME parts to find attachment details."""
+    attachments = []
+    body = part.get("body", {})
+    attachment_id = body.get("attachmentId")
+    if attachment_id:
+        attachments.append({
+            "filename": part.get("filename", ""),
+            "mime_type": part.get("mimeType", ""),
+            "attachment_id": attachment_id
+        })
+        
+    parts = part.get("parts", [])
+    for subpart in parts:
+        attachments.extend(_extract_attachments(subpart))
+    return attachments
 
 async def process_email_pipeline_async(email: str, history_id: int, message_id: str):
     """Asynchronous pipeline orchestrating token decrypt, Gmail fetch, pre-checks, AI classification, and TG alerts."""
@@ -52,7 +70,7 @@ async def process_email_pipeline_async(email: str, history_id: int, message_id: 
     message_data = await fetch_gmail_message(access_token, message_id)
     subject, sender, body = parse_gmail_message(message_data)
 
-    # 5. Local pre-checks
+    # 5. Local pre-checks on email body
     pre_check_matched = check_student_identifiers(
         body,
         register_number=register_number,
@@ -60,37 +78,146 @@ async def process_email_pipeline_async(email: str, history_id: int, message_id: 
         neopat_id=neopat_id
     )
 
-    # 6. Route to AI Gateway
+    # 5.5 In-Memory Attachment Processing (D-21)
+    attachments = _extract_attachments(message_data.get("payload", {}))
+    attachment_matched = False
+    matched_attachments = []
+    
+    student_info = {
+        "full_name": email.split("@")[0],
+        "register_number": register_number,
+        "neopat_id": neopat_id,
+        "email": email
+    }
+    
     ai_gateway = AIGateway()
+    
+    for att in attachments:
+        filename = att["filename"]
+        mime_type = att["mime_type"].lower()
+        attachment_id = att["attachment_id"]
+        
+        try:
+            attachment_bytes = await fetch_gmail_attachment(access_token, message_id, attachment_id)
+        except Exception as e:
+            logger.error(f"Failed to download attachment {filename}: {e}")
+            continue
+
+        matched_this_att = False
+        escalate = False
+        extracted_text = ""
+        confidence = 100.0
+        
+        # Check PDF (D-22, D-23)
+        if mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
+            try:
+                extracted_text = parse_pdf_in_memory(attachment_bytes)
+                if not extracted_text.strip():
+                    escalate = True
+            except Exception as e:
+                logger.warning(f"Error parsing PDF locally: {e}")
+                escalate = True
+                
+        # Check Excel (D-22)
+        elif mime_type in [
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ] or filename.lower().endswith((".xls", ".xlsx")):
+            try:
+                extracted_text = parse_excel_in_memory(attachment_bytes)
+                if not extracted_text.strip():
+                    escalate = True
+            except Exception as e:
+                logger.warning(f"Error parsing Excel locally: {e}")
+                escalate = True
+                
+        # Check Image (D-20)
+        elif mime_type.startswith("image/") or filename.lower().endswith((".png", ".jpg", ".jpeg")):
+            try:
+                extracted_text, confidence = parse_image_in_memory(attachment_bytes)
+                if confidence < 80.0:
+                    escalate = True
+            except Exception as e:
+                logger.warning(f"Error running local OCR: {e}")
+                escalate = True
+        
+        # Match locally if no escalation is required
+        if extracted_text and not escalate:
+            matched_this_att = check_student_identifiers(
+                extracted_text,
+                register_number=register_number,
+                email=email,
+                neopat_id=neopat_id
+            )
+            
+        # Escalation Trigger (D-24, D-25)
+        if escalate:
+            try:
+                vision_res = await ai_gateway.classify_attachment_vision(
+                    attachment_bytes=attachment_bytes,
+                    mime_type=mime_type or "image/png",
+                    student_info=student_info,
+                    message_id=message_id
+                )
+                if vision_res.is_matched:
+                    matched_this_att = True
+            except Exception as e:
+                logger.error(f"Gemini Vision fallback failed for attachment {filename}: {e}")
+                
+        if matched_this_att:
+            attachment_matched = True
+            matched_attachments.append(filename)
+
+    is_student_matched = pre_check_matched or attachment_matched
+
+    # 6. Route to AI Gateway (Email Classification)
     try:
         classification = await ai_gateway.classify_email(subject, body, message_id)
-        if classification.is_placement:
+        
+        should_notify = is_student_matched or (
+            classification.is_placement and
+            classification.category == PlacementCategory.OPPORTUNITY
+        )
+        
+        if should_notify:
+            category = "Shortlist"
+            if classification.is_placement and classification.category:
+                category = classification.category.value
+            elif is_student_matched:
+                category = "Shortlist"
+                
             text = format_telegram_message(
-                company=classification.company,
-                category=classification.category.value if classification.category else None,
-                role=classification.role,
-                package=classification.package,
-                deadline=classification.deadline,
-                application_links=classification.application_links
+                company=classification.company if classification.is_placement else "Unknown Company",
+                category=category,
+                role=classification.role if classification.is_placement else None,
+                package=classification.package if classification.is_placement else None,
+                deadline=classification.deadline if classification.is_placement else None,
+                application_links=classification.application_links if classification.is_placement else []
             )
+            
+            if attachment_matched:
+                text += f"\n\n<i>📎 Matched in attachment: {', '.join(matched_attachments)}</i>"
+                
             await send_telegram_alert(user.telegram_id, text)
+            
     except Exception as exc:
         logger.error(f"AI Gateway failed for message {message_id}: {exc}")
         # Fallback to local rule-based parsing and send corresponding alert
-        if pre_check_matched:
-            # Student matched explicitly in the body, but AI failed
+        if is_student_matched:
             fallback_text = (
                 "<b>🔴 High Priority Match (Fallback)</b>\n\n"
-                f"A placement email for <b>{email}</b> has been received and verified locally. "
-                "AI processing is currently unavailable. Please check your VIT mail immediately."
+                f"A placement update for <b>{email}</b> has been received and verified locally.\n"
+                "AI classification is currently unavailable. Please check your VIT mail immediately."
             )
+            if attachment_matched:
+                fallback_text += f"\n\n<i>📎 Matched in attachment: {', '.join(matched_attachments)}</i>"
+            await send_telegram_alert(user.telegram_id, fallback_text)
         else:
-            # General placement email warning since specific student match confidence is insufficient
             fallback_text = (
                 "<b>⚠️ Placement Update</b>\n\n"
                 "Placement-related email detected. Please check your VIT mail."
             )
-        await send_telegram_alert(user.telegram_id, fallback_text)
+            await send_telegram_alert(user.telegram_id, fallback_text)
 
 def run_coroutine_sync(coro):
     """Runs a coroutine synchronously, handling cases where an event loop is already running."""
