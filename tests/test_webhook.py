@@ -147,9 +147,16 @@ class MockCeleryTask:
             raise self.MaxRetriesExceededError("Max retries exceeded")
         raise Exception("Retry task execution")
 
-def test_dlq_routing(db_engine):
+@patch("src.tasks.email_tasks.process_email_pipeline_async")
+def test_dlq_routing(mock_pipeline, db_engine):
     """Verify task errors that exceed max retries are saved to the PostgreSQL Dead-Letter Queue."""
     mock_task = MockCeleryTask()
+    
+    async def pipeline_side_effect(email, history_id, message_id):
+        if email == "fail@vit.edu":
+            raise ValueError("Simulated processing failure for email event")
+        return None
+    mock_pipeline.side_effect = pipeline_side_effect
     
     # 1. Verify successful processing returns correct status
     res = process_email_event.__wrapped__.__func__(mock_task, "student@vitstudent.ac.in", 12345, "msg_success")

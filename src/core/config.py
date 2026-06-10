@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = Field(default="")
     GOOGLE_REDIRECT_URI: str = Field(default="http://localhost:8000/api/v1/auth/callback")
     WEBHOOK_AUDIENCE: str = Field(default="http://localhost:8000/api/v1/webhook")
+    GEMINI_API_KEY: str = Field(default="")
+    TELEGRAM_BOT_TOKEN: str = Field(default="")
 
     model_config = SettingsConfigDict(
         env_file=".env",
