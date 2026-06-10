@@ -68,7 +68,7 @@ async def send_telegram_alert(
         "chat_id": telegram_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_notification": True,  # Silence alert delivery (D-14)
+        "disable_notification": False,  # Normal delivery priority
         "disable_web_page_preview": False
     }
     

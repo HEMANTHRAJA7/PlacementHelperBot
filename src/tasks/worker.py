@@ -29,5 +29,9 @@ celery_app.conf.beat_schedule = {
         "task": "src.tasks.email_tasks.cleanup_old_logs",
         "schedule": crontab(hour=1, minute=0),
     },
+    "check-upcoming-deadlines-every-5min": {
+        "task": "src.tasks.email_tasks.check_and_send_reminders_task",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 

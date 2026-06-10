@@ -1,10 +1,13 @@
 import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 from celery.utils.log import get_task_logger
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from src.tasks.worker import celery_app
-from src.models.user import DeadLetterQueue, User
+from src.models.user import DeadLetterQueue, User, Reminder
 from src.core import database
 from src.core.security import CredentialEncryptor
 from src.core.gmail import fetch_gmail_message, parse_gmail_message, refresh_access_token, fetch_gmail_attachment
@@ -22,6 +25,74 @@ from src.core.metrics import (
 )
 
 logger = get_task_logger(__name__)
+
+def parse_deadline(deadline_str: str) -> Optional[datetime]:
+    """Helper to parse a deadline string into a timezone-aware UTC datetime."""
+    if not deadline_str:
+        return None
+    
+    s = deadline_str.strip()
+    if s.lower() in ("asap", "n/a", "none", "no deadline", "immediate", "immediately", "null"):
+        return None
+        
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        pass
+
+    formats = [
+        # ISO-like space separated
+        "%Y-%m-%d %H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        
+        # Slashes and dashes (Indian / European / US formats)
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M",
+        "%d-%m-%Y",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y",
+        
+        # Wordy formats
+        "%B %d, %Y %H:%M:%S",
+        "%B %d, %Y %I:%M %p",
+        "%B %d, %Y %H:%M",
+        "%B %d, %Y",
+        "%d %B %Y %H:%M:%S",
+        "%d %B %Y %I:%M %p",
+        "%d %B %Y %H:%M",
+        "%d %B %Y",
+        
+        # Short month names
+        "%b %d, %Y %H:%M:%S",
+        "%b %d, %Y %I:%M %p",
+        "%b %d, %Y %H:%M",
+        "%b %d, %Y",
+        "%d %b %Y %H:%M:%S",
+        "%d %b %Y %I:%M %p",
+        "%d %b %Y %H:%M",
+        "%d %b %Y",
+    ]
+    
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(s, fmt)
+            if "%z" not in fmt:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+            
+    return None
+
 
 async def write_to_dlq_async(message_id: str, email: str, history_id: int, error_reason: str):
     """Asynchronously logs failed message payload details into PostgreSQL DLQ table."""
@@ -248,6 +319,36 @@ async def process_email_pipeline_async(email: str, history_id: int, message_id: 
                         resource_type="telegram_api",
                         error_code="DELIVERY_FAILED"
                     )
+                
+                if (
+                    classification.is_placement
+                    and classification.category in (
+                        PlacementCategory.OPPORTUNITY,
+                        PlacementCategory.ASSESSMENT,
+                        PlacementCategory.INTERVIEW
+                    )
+                    and classification.deadline
+                ):
+                    parsed_dt = parse_deadline(classification.deadline)
+                    if parsed_dt:
+                        now_utc = datetime.now(timezone.utc)
+                        if parsed_dt > now_utc:
+                            async with database.SessionLocal() as reminder_session:
+                                new_reminder = Reminder(
+                                    user_id=user.id,
+                                    company=classification.company,
+                                    role=classification.role,
+                                    category=classification.category.value if hasattr(classification.category, "value") else classification.category,
+                                    deadline_at=parsed_dt,
+                                    status="ACTIVE",
+                                    source_email_id=message_id,
+                                    reminded_24h=False,
+                                    reminded_6h=False,
+                                    reminded_1h=False
+                                )
+                                reminder_session.add(new_reminder)
+                                await reminder_session.commit()
+                                logger.info(f"Saved active reminder for user {user.gmail_address} with deadline {parsed_dt}")
                 
         except Exception as exc:
             logger.error(f"AI Gateway failed for message {message_id}: {exc}")
@@ -523,6 +624,115 @@ async def cleanup_old_logs_async():
 def cleanup_old_logs():
     """Daily periodic task to prune audit logs and DLQ entries older than 90 days."""
     run_coroutine_sync(cleanup_old_logs_async())
+
+
+async def check_and_send_reminders_async():
+    """Fetches ACTIVE reminders, dispatches upcoming notifications, and marks expired."""
+    async with database.SessionLocal() as session:
+        result = await session.execute(
+            select(Reminder)
+            .filter(Reminder.status == "ACTIVE")
+            .options(selectinload(Reminder.user))
+        )
+        reminders = result.scalars().all()
+        
+        now = datetime.now(timezone.utc)
+        logger.info(f"Checking {len(reminders)} active reminders at {now}")
+        
+        for reminder in reminders:
+            user = reminder.user
+            if not user:
+                logger.warning(f"Reminder {reminder.id} references non-existent user {reminder.user_id}")
+                continue
+                
+            # Check if deadline has passed
+            deadline_at = reminder.deadline_at
+            if deadline_at.tzinfo is None:
+                deadline_at = deadline_at.replace(tzinfo=timezone.utc)
+
+            if now > deadline_at:
+                reminder.status = "EXPIRED"
+                session.add(reminder)
+                logger.info(f"Reminder {reminder.id} for {reminder.company} has EXPIRED")
+                continue
+                
+            updated = False
+            
+            # Calculate triggers
+            trigger_24h = deadline_at - timedelta(hours=24)
+            trigger_6h = deadline_at - timedelta(hours=6)
+            trigger_1h = deadline_at - timedelta(hours=1)
+            
+            deadline_str = deadline_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            # Check 24h alert
+            if now >= trigger_24h and not reminder.reminded_24h:
+                # 2-hour catch-up window
+                if (now - trigger_24h).total_seconds() <= 7200:
+                    msg = (
+                        f"⏰ <b>Deadline Reminder: {reminder.company or 'Unknown Company'}</b>\n\n"
+                        f"The deadline for <b>{reminder.company or 'Unknown Company'}</b> "
+                        f"(Role: <b>{reminder.role or 'N/A'}</b>) is in 24 hours.\n"
+                        f"Category: {reminder.category}\n"
+                        f"Deadline: {deadline_str}"
+                    )
+                    await send_telegram_alert(user.telegram_id, msg)
+                    reminder.last_reminder_sent_at = now
+                    logger.info(f"Sent 24h reminder for reminder {reminder.id} to user {user.id}")
+                else:
+                    logger.info(f"Skipped 24h reminder for reminder {reminder.id} due to 2h catch-up threshold exceeded")
+                reminder.reminded_24h = True
+                updated = True
+                
+            # Check 6h alert
+            if now >= trigger_6h and not reminder.reminded_6h:
+                # 2-hour catch-up window
+                if (now - trigger_6h).total_seconds() <= 7200:
+                    msg = (
+                        f"⏰ <b>Deadline Reminder: {reminder.company or 'Unknown Company'}</b>\n\n"
+                        f"The deadline for <b>{reminder.company or 'Unknown Company'}</b> "
+                        f"(Role: <b>{reminder.role or 'N/A'}</b>) is in 6 hours.\n"
+                        f"Category: {reminder.category}\n"
+                        f"Deadline: {deadline_str}"
+                    )
+                    await send_telegram_alert(user.telegram_id, msg)
+                    reminder.last_reminder_sent_at = now
+                    logger.info(f"Sent 6h reminder for reminder {reminder.id} to user {user.id}")
+                else:
+                    logger.info(f"Skipped 6h reminder for reminder {reminder.id} due to 2h catch-up threshold exceeded")
+                reminder.reminded_6h = True
+                updated = True
+                
+            # Check 1h alert
+            if now >= trigger_1h and not reminder.reminded_1h:
+                # 2-hour catch-up window
+                if (now - trigger_1h).total_seconds() <= 7200:
+                    msg = (
+                        f"⏰ <b>Deadline Reminder: {reminder.company or 'Unknown Company'}</b>\n\n"
+                        f"The deadline for <b>{reminder.company or 'Unknown Company'}</b> "
+                        f"(Role: <b>{reminder.role or 'N/A'}</b>) is in 1 hour.\n"
+                        f"Category: {reminder.category}\n"
+                        f"Deadline: {deadline_str}"
+                    )
+                    await send_telegram_alert(user.telegram_id, msg)
+                    reminder.last_reminder_sent_at = now
+                    logger.info(f"Sent 1h reminder for reminder {reminder.id} to user {user.id}")
+                else:
+                    logger.info(f"Skipped 1h reminder for reminder {reminder.id} due to 2h catch-up threshold exceeded")
+                reminder.reminded_1h = True
+                reminder.status = "COMPLETED"
+                updated = True
+                
+            if updated:
+                session.add(reminder)
+                
+        await session.commit()
+
+@celery_app.task(name="src.tasks.email_tasks.check_and_send_reminders_task")
+def check_and_send_reminders_task():
+    """Periodic task running every 5 minutes to process deadline reminders."""
+    run_coroutine_sync(check_and_send_reminders_async())
+
 
 
 

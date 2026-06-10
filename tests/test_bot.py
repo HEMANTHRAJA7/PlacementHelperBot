@@ -59,7 +59,7 @@ async def test_send_telegram_alert_success(mock_post):
     assert payload["chat_id"] == 987654321
     assert payload["text"] == "Hello Student!"
     assert payload["parse_mode"] == "HTML"
-    assert payload["disable_notification"] is True  # Verify silent delivery
+    assert payload["disable_notification"] is False  # Verify normal delivery priority
 
 @pytest.mark.asyncio
 @patch("src.tasks.email_tasks.refresh_access_token", new_callable=AsyncMock)
