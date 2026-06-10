@@ -51,9 +51,16 @@ async def callback(
     db: AsyncSession = Depends(get_db)
 ):
     """Exchanges code for credentials, fetches email, encrypts secrets, and saves to database."""
+    from src.core.audit import log_audit_event
     try:
         telegram_id = int(state)
     except ValueError:
+        await log_audit_event(
+            event_type="onboarding",
+            status="failed",
+            resource_type="gmail_api",
+            error_code="INVALID_STATE"
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid state parameter; Telegram ID must be an integer"
@@ -64,6 +71,12 @@ async def callback(
         flow.fetch_token(code=code)
     except Exception as e:
         logger.error(f"Error exchanging authorization code: {e}")
+        await log_audit_event(
+            event_type="onboarding",
+            status="failed",
+            resource_type="gmail_api",
+            error_code="OAUTH_EXCHANGE_FAILED"
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"OAuth exchange failed: {str(e)}"
@@ -72,6 +85,12 @@ async def callback(
     credentials = flow.credentials
     if not credentials.refresh_token:
         logger.error(f"Failed to retrieve refresh token for Telegram ID: {telegram_id}")
+        await log_audit_event(
+            event_type="onboarding",
+            status="failed",
+            resource_type="gmail_api",
+            error_code="MISSING_REFRESH_TOKEN"
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Did not receive refresh token. Please revoke access from Google Account Settings and retry."
@@ -91,6 +110,12 @@ async def callback(
                 raise ValueError("emailAddress field missing from Google profile response")
         except Exception as e:
             logger.error(f"Failed to fetch Gmail profile: {e}")
+            await log_audit_event(
+                event_type="onboarding",
+                status="failed",
+                resource_type="gmail_api",
+                error_code="PROFILE_RETRIEVAL_FAILED"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to fetch email address from Gmail API"
@@ -115,6 +140,14 @@ async def callback(
         user.encrypted_refresh_token = encrypted_token
 
     await db.commit()
+
+    await log_audit_event(
+        event_type="onboarding",
+        status="success",
+        user_id=user.id,
+        resource_type="gmail_api"
+    )
+
 
     # Premium success landing page
     success_html = """

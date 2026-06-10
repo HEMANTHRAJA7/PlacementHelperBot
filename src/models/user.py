@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, JSON, Numeric
+from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, JSON, Numeric, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from src.core.database import Base
 
@@ -11,6 +11,9 @@ class User(Base):
     encrypted_refresh_token = Column(Text, nullable=False)
     encrypted_register_number = Column(String(512), nullable=True)
     encrypted_neopat_id = Column(String(512), nullable=True)
+    watch_active = Column(Boolean, default=True, nullable=False)
+    watch_resource_id = Column(String(255), nullable=True)
+    watch_expiration = Column(BigInteger, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 class DeadLetterQueue(Base):
@@ -34,4 +37,18 @@ class AIUsageLog(Base):
     message_id = Column(String(255), nullable=True, index=True)
     status = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    event_type = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=False)
+    message_id = Column(String(255), nullable=True, index=True)
+    resource_type = Column(String(100), nullable=True)
+    error_code = Column(String(100), nullable=True)
+    retry_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 

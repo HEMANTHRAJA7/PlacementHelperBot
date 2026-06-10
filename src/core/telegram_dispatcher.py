@@ -83,7 +83,12 @@ async def send_telegram_alert(
                     f"Failed to send Telegram message to {telegram_id}. "
                     f"Status: {response.status_code}, Response: {response.text}"
                 )
+                from src.core.metrics import TELEGRAM_DELIVERY_FAILURES
+                TELEGRAM_DELIVERY_FAILURES.inc()
                 return False
     except Exception as e:
         logger.error(f"HTTP request to Telegram API failed: {e}")
+        from src.core.metrics import TELEGRAM_DELIVERY_FAILURES
+        TELEGRAM_DELIVERY_FAILURES.inc()
         return False
+

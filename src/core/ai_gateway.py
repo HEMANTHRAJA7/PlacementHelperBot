@@ -121,6 +121,12 @@ class AIGateway:
         """Asynchronously writes a token usage and cost log entry into PostgreSQL."""
         cost = (input_tokens * 0.075 / 1_000_000.0) + (output_tokens * 0.30 / 1_000_000.0)
         
+        # Increment Prometheus metrics
+        from src.core.metrics import AI_TOKENS, AI_COST_USD
+        AI_TOKENS.labels(model=self.model_name, type="prompt").inc(input_tokens)
+        AI_TOKENS.labels(model=self.model_name, type="completion").inc(output_tokens)
+        AI_COST_USD.inc(cost)
+        
         try:
             async with database.SessionLocal() as session:
                 log_entry = AIUsageLog(
@@ -220,6 +226,8 @@ class AIGateway:
                     # Reraise or handle
                     break
                     
+        from src.core.metrics import AI_FAILURES
+        AI_FAILURES.inc()
         raise HTTPException(
             status_code=502,
             detail=f"AI Gateway failed after max retries. Last error: {str(last_exception)}"
@@ -308,6 +316,8 @@ class AIGateway:
                 else:
                     break
                     
+        from src.core.metrics import AI_FAILURES
+        AI_FAILURES.inc()
         raise HTTPException(
             status_code=502,
             detail=f"AI Gateway vision scan failed after max retries. Last error: {str(last_exception)}"

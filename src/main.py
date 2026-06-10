@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from src.api.router import api_router
+from src.api.endpoints.monitoring import router as monitoring_router
 from src.core.config import settings
 
 app = FastAPI(
@@ -10,6 +11,8 @@ app = FastAPI(
 
 # Register routers
 app.include_router(api_router)
+app.include_router(monitoring_router)
+
 
 @app.get("/")
 def read_root():

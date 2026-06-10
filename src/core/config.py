@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     WEBHOOK_AUDIENCE: str = Field(default="http://localhost:8000/api/v1/webhook")
     GEMINI_API_KEY: str = Field(default="")
     TELEGRAM_BOT_TOKEN: str = Field(default="")
+    GMAIL_PUBSUB_TOPIC: str = Field(default="")
 
     model_config = SettingsConfigDict(
         env_file=".env",

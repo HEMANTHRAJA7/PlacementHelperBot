@@ -47,10 +47,12 @@ async def webhook(
     message_id = payload.message.messageId
     
     # 2. Check message_id idempotency
+    from src.core.metrics import GMAIL_EVENTS_PROCESSED, GMAIL_DUPLICATE_EVENTS
     msg_key = f"placement_sentinel:msg:{message_id}"
     is_msg_seen = await redis.get(msg_key)
     if is_msg_seen:
         logger.info(f"Duplicate messageId received: {message_id}. Ignoring event.")
+        GMAIL_DUPLICATE_EVENTS.inc()
         return {"status": "ignored", "detail": "duplicate messageId"}
         
     # Decode base64 data to extract emailAddress and historyId
@@ -80,6 +82,7 @@ async def webhook(
         logger.info(f"Duplicate historyId {history_id} for email {email}. Ignoring event.")
         # Cache message_id so we drop subsequent retries of this push event immediately
         await redis.set(msg_key, "1", ex=86400) # 24-hour TTL
+        GMAIL_DUPLICATE_EVENTS.inc()
         return {"status": "ignored", "detail": "duplicate historyId"}
         
     # Store both in Redis with 24-hour expiration to block duplicates (D-06)
@@ -88,6 +91,8 @@ async def webhook(
     
     # 3. Dispatch background task to Celery out-of-band (T-01-04)
     process_email_event.delay(email, history_id, message_id)
+    GMAIL_EVENTS_PROCESSED.inc()
     logger.info(f"Successfully enqueued process_email_event for {email} (historyId={history_id})")
     
     return {"status": "queued"}
+

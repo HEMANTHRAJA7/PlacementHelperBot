@@ -113,4 +113,23 @@ async def fetch_gmail_attachment(access_token: str, message_id: str, attachment_
         raw_data = data.get("data", "")
         return base64.urlsafe_b64decode(raw_data.encode("utf-8"))
 
+async def setup_gmail_watch(access_token: str, topic_name: str) -> dict:
+    """Sets up a Gmail push notification watch.
+    
+    Returns:
+        dict containing 'expiration' (string timestamp in milliseconds) and 'historyId'.
+    """
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/watch",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "topicName": topic_name,
+                "labelIds": ["INBOX"]
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 
