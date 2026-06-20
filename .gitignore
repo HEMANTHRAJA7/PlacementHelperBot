@@ -39,5 +39,8 @@ yarn-debug.log
 diagnozer-app-backup/
 *.bak
 *.tmp
+learn
+LEARN.md
+
 
 
