@@ -7,7 +7,8 @@ backend_url = "db+" + settings.DATABASE_URL.replace("postgresql+asyncpg://", "po
 celery_app = Celery(
     "placement_sentinel_tasks",
     broker=settings.REDIS_URL,
-    backend=backend_url
+    backend=backend_url,
+    include=["src.tasks.email_tasks"]
 )
 
 from celery.schedules import crontab

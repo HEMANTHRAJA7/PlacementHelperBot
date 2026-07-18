@@ -42,5 +42,12 @@ diagnozer-app-backup/
 learn
 LEARN.md
 
+# Mermaid Diagrams
+mermaid-diagrams.md
 
+# Database Schema
+database_schema.md
+
+# Deployment Guide
+deployment_guide.md
 
